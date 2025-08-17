@@ -18,4 +18,12 @@ export class StocksController {
       .filter(Boolean);
     return this.service.quotes(symbols);
   }
+
+  @Get(':symbol/intraday')
+  intraday(
+    @Param('symbol') symbol: string,
+    @Query('interval') interval = '1min'
+  ) {
+    return this.service.intraday(symbol.toUpperCase(), interval);
+  }
 }

@@ -1,8 +1,8 @@
 import axios from 'axios';
 import NodeCache from 'node-cache';
-import { Injectable } from '@nestjs/common';
-
-const cache = new NodeCache({ stdTTL: 60 }); 
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import dayjs from 'dayjs';
+const cache = new NodeCache({ stdTTL: 60 });
 
 export interface QuotePayload {
   symbol: string;
@@ -14,8 +14,8 @@ export interface QuotePayload {
 
 @Injectable()
 export class StocksService {
-  private base = process.env.FMP_BASE_URL || 'https://financialmodelingprep.com/api/v3';
-  private key = process.env.FMP_API_KEY || '';
+  private fmpBase = process.env.FMP_BASE_URL || 'https://financialmodelingprep.com/api/v3';
+  private fmpKey = process.env.FMP_API_KEY || '';
 
   private buildPayload(raw: any): QuotePayload | null {
     const sym = String(raw?.symbol || '').toUpperCase();
@@ -46,15 +46,17 @@ export class StocksService {
 
   async quote(symbol: string): Promise<QuotePayload> {
     const sym = symbol.toUpperCase();
-    const key = `quote:${sym}`;
-    const cached = cache.get<QuotePayload>(key);
+    const fmpKey = `quote:${sym}`;
+    const cached = cache.get<QuotePayload>(fmpKey);
     if (cached) return cached;
 
-    const url = `${this.base}/quote/${encodeURIComponent(sym)}?apikey=${this.key}`;
+    const url = `${this.fmpBase}/quote/${encodeURIComponent(sym)}?apikey=${
+      this.fmpKey
+    }`;
     const { data } = await axios.get(url);
     const raw = Array.isArray(data) ? data[0] : data;
     const payload = this.buildPayload(raw)!;
-    cache.set(key, payload);
+    cache.set(fmpKey, payload);
     return payload;
   }
 
@@ -71,7 +73,7 @@ export class StocksService {
     }
 
     if (toFetch.length) {
-      const url = `${this.base}/quote/${encodeURIComponent(toFetch.join(','))}?apikey=${this.key}`;
+      const url = `${this.fmpBase}/quote/${encodeURIComponent(toFetch.join(','))}?apikey=${this.fmpKey}`;
       const { data } = await axios.get(url);
       const arr = Array.isArray(data) ? data : [data];
       for (const raw of arr) {
@@ -84,5 +86,25 @@ export class StocksService {
     }
 
     return list.map((s) => results[s]).filter(Boolean);
+  }
+
+  async intraday(symbol: string, interval = '1min') {
+    const url = `${this.fmpBase}/historical-chart/${interval}/${symbol}?apikey=${this.fmpKey}`;
+
+    let rows: Array<{ date: string; close: number }>;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(String(res.status));
+      rows = await res.json();
+    } catch (e) {
+      console.error(`intraday failed for ${symbol}`, (e as any)?.message);
+      throw new InternalServerErrorException('Failed to load intraday data');
+    }
+    const points = (rows ?? [])
+      .slice(0, 390)
+      .map((r) => ({ t: dayjs(r.date).format('HH:mm'), p: r.close }))
+      .reverse();
+
+    return { symbol, interval, points };
   }
 }
